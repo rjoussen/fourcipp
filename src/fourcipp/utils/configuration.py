@@ -98,6 +98,8 @@ class ConfigProfile:
         self.sections = Sections.from_metadata(self.fourc_metadata)
 
         self.fourc_json_schema_path = pathlib.Path(self.fourc_json_schema_path)
+        if not self.fourc_json_schema_path.is_absolute():
+            self.fourc_json_schema_path = CONFIG_PACKAGE / self.fourc_json_schema_path
         self.fourc_json_schema = ConfigProfile._load_data_from_path(
             self.fourc_json_schema_path
         )

@@ -69,6 +69,60 @@ def is_section_known(section_name: str, known_section_names: list[str]) -> bool:
     return section_name in known_section_names or section_name.startswith("FUNCT")
 
 
+def _resolve_schema_ref(ref: str, schema_path: Path) -> Path:
+    """Resolve a JSON schema ref path relative to the schema file."""
+    ref_path = pathlib.Path(ref)
+    if ref_path.is_absolute():
+        return ref_path
+    return pathlib.Path(schema_path).parent / ref_path
+
+
+def _iter_schema_refs(json_schema: dict) -> Sequence[str]:
+    """Return direct schema references from allOf entries."""
+    return [
+        subschema["$ref"]
+        for subschema in json_schema.get("allOf", [])
+        if "$ref" in subschema
+    ]
+
+
+def get_required_sections(json_schema: dict, schema_path: Path) -> list[str]:
+    """Get required top-level sections from a schema or pure wrapper schema."""
+    if "required" in json_schema:
+        return json_schema["required"]
+
+    for ref in _iter_schema_refs(json_schema):
+        referenced_schema = load_yaml(_resolve_schema_ref(ref, schema_path))
+        if "required" in referenced_schema:
+            return referenced_schema["required"]
+
+    return []
+
+
+def _schema_without_required_sections(json_schema: dict, schema_path: Path) -> dict:
+    """Copy a schema while removing requiredness of top-level sections.
+
+    Completion schemas wrap the generated schema by reference. For
+    section-only validation, the wrapper should stay in place, but the
+    wrapped schema must no longer require global 4C sections.
+    """
+    validation_schema = copy.deepcopy(json_schema)
+    validation_schema.pop("required", None)
+
+    for subschema in validation_schema.get("allOf", []):
+        ref = subschema.pop("$ref", None)
+        if ref is None:
+            continue
+
+        referenced_schema = copy.deepcopy(
+            load_yaml(_resolve_schema_ref(ref, schema_path))
+        )
+        referenced_schema.pop("required", None)
+        subschema.update(referenced_schema)
+
+    return validation_schema
+
+
 def sort_by_section_names(data: dict) -> dict:
     """Sort a dictionary by its 4C sections.
 
@@ -90,7 +144,9 @@ def sort_by_section_names(data: dict) -> dict:
         Dict sorted in 4C fashion
     """
 
-    required_sections = CONFIG.fourc_json_schema["required"]
+    required_sections = get_required_sections(
+        CONFIG.fourc_json_schema, CONFIG.fourc_json_schema_path
+    )
     n_sections_splitter = len(CONFIG.sections.all_sections) * 1000
 
     # typed sections (sorted alphabetically + case insensitive, 'DESIGN *' + 'MATERIALS' at the end)
@@ -562,14 +618,19 @@ class FourCInput:
 
         # Remove the requiredness of the sections
         if sections_only:
-            validation_schema = json_schema.copy()
-            validation_schema.pop("required")
+            validation_schema = _schema_without_required_sections(
+                json_schema, CONFIG.fourc_json_schema_path
+            )
 
         if convert_to_native_types:
             self.convert_to_native_types()
 
         # Validate sections using schema
-        validate_using_json_schema(self._sections, validation_schema)
+        validate_using_json_schema(
+            self._sections,
+            validation_schema,
+            base_uri=pathlib.Path(CONFIG.fourc_json_schema_path).as_uri(),
+        )
 
         # Legacy sections are only checked if they are of type string
         for section_name, section in inline_legacy_sections(

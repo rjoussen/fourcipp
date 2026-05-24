@@ -34,6 +34,7 @@ from fourcipp import CONFIG
 from fourcipp.fourc_input import (
     FourCInput,
     UnknownSectionException,
+    get_required_sections,
     sort_by_section_names,
 )
 from fourcipp.utils.cli import modify_input_with_defaults
@@ -575,13 +576,16 @@ def test_validation(fourc_input, error_context, sections_only):
 
 def test_sort_by_section_names():
     """Test sorting by section names."""
+    required_sections = get_required_sections(
+        CONFIG.fourc_json_schema, CONFIG.fourc_json_schema_path
+    )
 
     # create list of typed sections without title and required sections
     typed_sections = [
         sec
         for sec in CONFIG.sections.typed_sections
         if sec != CONFIG.fourc_metadata["metadata"]["description_section_name"]
-        and sec not in set(CONFIG.fourc_json_schema["required"])
+        and sec not in set(required_sections)
     ]
 
     # also use end subset to also add some lowercase sections
@@ -599,7 +603,7 @@ def test_sort_by_section_names():
 
     correct_section_order = (
         [CONFIG.fourc_metadata["metadata"]["description_section_name"]]
-        + CONFIG.fourc_json_schema["required"]
+        + required_sections
         + typed_sections
         + ["MATERIALS"]
         + design_sections
